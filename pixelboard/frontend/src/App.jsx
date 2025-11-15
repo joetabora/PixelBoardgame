@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { io } from "socket.io-client";
+import { createSocket } from "./socket.js";
 import PixelGrid from "./components/PixelGrid.jsx";
 import ColorPalette from "./components/ColorPalette.jsx";
 import ControlPanel from "./components/ControlPanel.jsx";
@@ -52,10 +52,8 @@ function App() {
   const audioPoolRef = useRef([]);
   const boardSizeRef = useRef(DEFAULT_BOARD_SIZE);
 
-  const socketUrl = useMemo(
-    () => import.meta.env.VITE_SOCKET_URL || "http://localhost:4000",
-    []
-  );
+  // Server URL from environment (required for production)
+  const serverUrl = import.meta.env.VITE_SERVER_URL || "";
 
   const blipUrl = useMemo(
     () => new URL("/sounds/blip.wav", import.meta.url).href,
@@ -112,7 +110,12 @@ function App() {
 
   // Establish Socket.io connection once on mount
   useEffect(() => {
-    const socket = io(socketUrl, { transports: ["websocket", "polling"] });
+    if (!serverUrl) {
+      console.error("VITE_SERVER_URL is not set. Cannot connect to server.");
+      return;
+    }
+
+    const socket = createSocket();
     socketRef.current = socket;
 
     socket.on("connect", () => {
@@ -274,7 +277,7 @@ function App() {
     return () => {
       socket.disconnect();
     };
-  }, [socketUrl, playBlip]);
+  }, [serverUrl, playBlip]);
 
   // Keep an off-screen canvas in sync for PNG downloads
   useEffect(() => {

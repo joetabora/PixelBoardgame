@@ -3,11 +3,12 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
-import { GameManager } from "./src/gameManager.js";
+import { GameManager } from "./gameManager.js";
 
 dotenv.config();
 
 const PORT = process.env.PORT || 4000;
+const CLIENT_URL = process.env.CLIENT_URL || "*";
 const DEFAULT_SIZE = 50;
 
 // Create initial board filled with null (no color)
@@ -19,18 +20,30 @@ let boardState = createGrid(boardSize);
 let boardOwnership = createGrid(boardSize);
 
 const app = express();
-app.use(cors());
+
+// Enable CORS with CLIENT_URL from environment
+app.use(
+  cors({
+    origin: CLIENT_URL,
+    methods: ["GET", "POST"],
+    credentials: true
+  })
+);
 
 const server = http.createServer(app);
+
+// Socket.io server with CORS configuration
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: CLIENT_URL,
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
+// Health check endpoint
 app.get("/", (_req, res) => {
-  res.send("Pixlnary backend is running.");
+  res.json({ status: "ok", message: "Pixlnary backend is running." });
 });
 
 // Initialize game manager
@@ -54,7 +67,7 @@ const buildLeaderboard = () =>
     .slice(0, 10);
 
 const emitLeaderboard = () => {
-  io.emit("leaderboard", { leaderboard: buildLeaderboard() });
+  io.to("pixlnary").emit("leaderboard", { leaderboard: buildLeaderboard() });
 };
 
 const sanitizeUsername = (value) => {
@@ -95,7 +108,7 @@ io.on("connection", (socket) => {
     count: io.engine.clientsCount,
     leaderboard: buildLeaderboard()
   });
-  io.emit("user_count", { count: io.engine.clientsCount });
+  io.to("pixlnary").emit("user_count", { count: io.engine.clientsCount });
   emitLeaderboard();
 
   console.log(`${username} connected as ${role}. Active users: ${io.engine.clientsCount}`);
@@ -125,7 +138,7 @@ io.on("connection", (socket) => {
       console.log(`[Connection] Round start result: ${started}`);
     }, 1000);
   } else {
-    console.log(`[Connection] Room state - Drawer: ${room?.drawer || 'none'}, Guesser: ${room?.guesser || 'none'}, Active: ${room?.isRoundActive || false}`);
+    console.log(`[Connection] Room state - Drawer: ${room?.drawer || "none"}, Guesser: ${room?.guesser || "none"}, Active: ${room?.isRoundActive || false}`);
   }
 
   // Handle joinGame event (explicit game join)
@@ -133,7 +146,7 @@ io.on("connection", (socket) => {
     // Re-assign role (will return existing if already assigned, or assign new one)
     const currentRole = gameManager.getRole(socket.id);
     const newRole = gameManager.assignRole(socket.id, "pixlnary");
-    
+
     // Only emit if role changed
     if (newRole !== currentRole) {
       socket.emit("assignRole", { role: newRole });
@@ -292,7 +305,7 @@ io.on("connection", (socket) => {
     };
 
     console.log(`[Chat] ${payload.username}: ${payload.message}`);
-    io.emit("chat_message", payload);
+    io.to("pixlnary").emit("chat_message", payload);
   });
 
   socket.on("change_username", ({ username: requested }) => {
@@ -318,7 +331,7 @@ io.on("connection", (socket) => {
     console.log(`[Rename] ${previous} is now ${username}`);
     emitLeaderboard();
     socket.emit("username_updated", { username });
-    io.emit("user_renamed", { previous, username });
+    io.to("pixlnary").emit("user_renamed", { previous, username });
   });
 
   socket.on("disconnect", () => {
@@ -336,5 +349,6 @@ io.on("connection", (socket) => {
 
 server.listen(PORT, () => {
   console.log(`Pixlnary backend listening on port ${PORT}`);
+  console.log(`CORS enabled for origin: ${CLIENT_URL}`);
 });
 
