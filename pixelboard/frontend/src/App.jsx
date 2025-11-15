@@ -7,6 +7,7 @@ import StatusBar from "./components/StatusBar.jsx";
 import ChatPanel from "./components/ChatPanel.jsx";
 import Leaderboard from "./components/Leaderboard.jsx";
 import HowToPlayModal from "./components/HowToPlayModal.jsx";
+import PixlnaryUI from "./components/PixlnaryUI.jsx";
 
 const DEFAULT_BOARD_SIZE = 50;
 const PALETTE = [
@@ -40,6 +41,11 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [chatHeight, setChatHeight] = useState(280);
   const [isHowToVisible, setIsHowToVisible] = useState(false);
+  // Pixlnary game state
+  const [role, setRole] = useState("spectator");
+  const [secretWord, setSecretWord] = useState(null);
+  const [timer, setTimer] = useState(null);
+  const [isRoundActive, setIsRoundActive] = useState(false);
   const socketRef = useRef(null);
   const canvasRef = useRef(null);
   const pixelGridRef = useRef(null);
@@ -109,8 +115,40 @@ function App() {
     const socket = io(socketUrl, { transports: ["websocket", "polling"] });
     socketRef.current = socket;
 
-    socket.on("connect", () => setIsConnected(true));
+    socket.on("connect", () => {
+      setIsConnected(true);
+      // Join game when connected
+      socket.emit("joinGame");
+    });
     socket.on("disconnect", () => setIsConnected(false));
+
+    // Pixlnary game events
+    socket.on("assignRole", ({ role: assignedRole }) => {
+      setRole(assignedRole);
+    });
+
+    socket.on("secretWord", ({ word }) => {
+      console.log(`[Client] Received secret word: ${word}`);
+      setSecretWord(word);
+    });
+
+    socket.on("timerUpdate", ({ time }) => {
+      setTimer(time);
+    });
+
+    socket.on("roundStart", () => {
+      console.log(`[Client] Round started`);
+      setIsRoundActive(true);
+      // Don't clear secret word here - it might already be set or arriving soon
+    });
+
+    socket.on("roundWon", () => {
+      setIsRoundActive(false);
+    });
+
+    socket.on("roundFailed", () => {
+      setIsRoundActive(false);
+    });
 
     socket.on(
       "board_state",
@@ -264,6 +302,10 @@ function App() {
 
   const handlePaint = useCallback(
     (x, y) => {
+      // Only drawer can paint during active round
+      if (isRoundActive && role !== "drawer") {
+        return;
+      }
       if (!socketRef.current) return;
       const color = selectedColor;
       socketRef.current.emit("paint_pixel", { x, y, color });
@@ -289,7 +331,15 @@ function App() {
         return next;
       });
     },
-    [selectedColor, username]
+    [selectedColor, username, isRoundActive, role]
+  );
+
+  const handleGuess = useCallback(
+    (guess) => {
+      if (!socketRef.current || role !== "guesser" || !isRoundActive) return;
+      socketRef.current.emit("guessAttempt", { guess });
+    },
+    [role, isRoundActive]
   );
 
   const handleClear = useCallback(() => {
@@ -304,7 +354,7 @@ function App() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const link = document.createElement("a");
-    link.download = `pixelboard-${Date.now()}.png`;
+    link.download = `pixlnary-${Date.now()}.png`;
     link.href = canvas.toDataURL("image/png");
     link.click();
   }, []);
@@ -364,7 +414,7 @@ function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="header-content">
-          <h1>PixelBoard</h1>
+          <h1>Pixlnary</h1>
           <button
             type="button"
             className="action-btn howto-btn"
@@ -383,11 +433,20 @@ function App() {
 
       <main className={`app-main ${isDesktop ? "layout-desktop" : "layout-mobile"}`} style={mainStyle}>
         <section className="canvas-section">
+          <PixlnaryUI
+            role={role}
+            secretWord={secretWord}
+            timer={timer}
+            isRoundActive={isRoundActive}
+            onGuess={handleGuess}
+            socket={socketRef.current}
+          />
           <PixelGrid
             ref={pixelGridRef}
             board={board}
             owners={boardOwners}
             onPaint={handlePaint}
+            canDraw={!isRoundActive || role === "drawer"}
           />
         </section>
 
@@ -438,7 +497,7 @@ function App() {
       </main>
 
       <footer className="app-footer">
-        <p>Drop pixels, remix colors, and co-create arcade art in real time.</p>
+        <p>Draw and guess in this multiplayer pixel art game!</p>
       </footer>
 
       <canvas ref={canvasRef} className="download-canvas" aria-hidden="true" />

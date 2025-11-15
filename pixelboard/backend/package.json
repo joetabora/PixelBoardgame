@@ -1,7 +1,7 @@
 {
-  "name": "pixelboard-backend",
+  "name": "pixlnary-backend",
   "version": "1.0.0",
-  "description": "PixelBoard real-time pixel art collaboration backend",
+  "description": "Pixlnary real-time drawing and guessing game backend",
   "main": "index.js",
   "type": "module",
   "scripts": {

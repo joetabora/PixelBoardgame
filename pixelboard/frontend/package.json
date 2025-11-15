@@ -1,8 +1,8 @@
 {
-  "name": "pixelboard-frontend",
+  "name": "pixlnary-frontend",
   "version": "1.0.0",
   "private": true,
-  "description": "PixelBoard real-time pixel art collaboration frontend",
+  "description": "Pixlnary real-time drawing and guessing game frontend",
   "type": "module",
   "scripts": {
     "dev": "vite",

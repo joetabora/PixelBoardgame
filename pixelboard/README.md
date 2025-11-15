@@ -1,6 +1,6 @@
-# PixelBoard
+# Pixlnary
 
-PixelBoard is a real-time, multiplayer pixel art collaboration board. Draw together on a shared grid, choose from a retro-inspired palette, and see every stroke appear instantly across all connected users.
+Pixlnary is a real-time, multiplayer drawing and guessing game. One player draws a secret word while others try to guess it before time runs out!
 
 ## Features
 
@@ -29,7 +29,7 @@ Clone the repository and set up the backend and frontend projects separately.
 
 ```bash
 git clone <your-repo-url>
-cd pixelboard
+cd pixlnary
 ```
 
 ### Backend
@@ -51,7 +51,7 @@ PORT=5000
 Open a new terminal window/tab:
 
 ```bash
-cd pixelboard/frontend
+cd pixlnary/frontend
 npm install
 npm run dev
 ```

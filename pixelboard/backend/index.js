@@ -3,6 +3,7 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
+import { GameManager } from "./src/gameManager.js";
 
 dotenv.config();
 
@@ -29,8 +30,11 @@ const io = new Server(server, {
 });
 
 app.get("/", (_req, res) => {
-  res.send("PixelBoard backend is running.");
+  res.send("Pixlnary backend is running.");
 });
+
+// Initialize game manager
+const gameManager = new GameManager(io);
 
 const userLabels = new Map(); // socket.id -> username
 const lastPixelByUser = new Map(); // socket.id -> { x, y, previousColor, previousOwner }
@@ -74,6 +78,13 @@ io.on("connection", (socket) => {
   lastPixelByUser.set(socket.id, null);
   paintCountByUser.set(socket.id, 0);
 
+  // Join default room for Pixlnary
+  socket.join("pixlnary");
+
+  // Assign role when player joins
+  const role = gameManager.assignRole(socket.id, "pixlnary");
+  socket.emit("assignRole", { role });
+
   // Send current board state to newly connected client
   socket.emit("board_state", {
     board: boardState,
@@ -87,9 +98,78 @@ io.on("connection", (socket) => {
   io.emit("user_count", { count: io.engine.clientsCount });
   emitLeaderboard();
 
-  console.log(`${username} connected. Active users: ${io.engine.clientsCount}`);
+  console.log(`${username} connected as ${role}. Active users: ${io.engine.clientsCount}`);
+
+  // Check if we should start a round now that this player joined
+  const room = gameManager.getRoom("pixlnary");
+  if (room && room.drawer && room.guesser && !room.isRoundActive) {
+    console.log(`[Connection] Both players present. Drawer: ${room.drawer}, Guesser: ${room.guesser}`);
+    // Clear board before starting new round
+    boardState = createGrid(boardSize);
+    boardOwnership = createGrid(boardSize);
+    lastPixelByUser.forEach((_value, key) => lastPixelByUser.set(key, null));
+    paintCountByUser.forEach((_value, key) => paintCountByUser.set(key, 0));
+    io.to("pixlnary").emit("board_cleared");
+    io.to("pixlnary").emit("board_state", {
+      board: boardState,
+      owners: boardOwnership,
+      size: boardSize,
+      count: io.engine.clientsCount,
+      leaderboard: buildLeaderboard()
+    });
+
+    // Start new round after a short delay
+    setTimeout(() => {
+      console.log(`[Connection] Starting round...`);
+      const started = gameManager.startRound("pixlnary");
+      console.log(`[Connection] Round start result: ${started}`);
+    }, 1000);
+  } else {
+    console.log(`[Connection] Room state - Drawer: ${room?.drawer || 'none'}, Guesser: ${room?.guesser || 'none'}, Active: ${room?.isRoundActive || false}`);
+  }
+
+  // Handle joinGame event (explicit game join)
+  socket.on("joinGame", () => {
+    // Re-assign role (will return existing if already assigned, or assign new one)
+    const currentRole = gameManager.getRole(socket.id);
+    const newRole = gameManager.assignRole(socket.id, "pixlnary");
+    
+    // Only emit if role changed
+    if (newRole !== currentRole) {
+      socket.emit("assignRole", { role: newRole });
+    }
+
+    // If we now have both drawer and guesser, start a round
+    const room = gameManager.getRoom("pixlnary");
+    if (room && room.drawer && room.guesser && !room.isRoundActive) {
+      // Clear board before starting new round
+      boardState = createGrid(boardSize);
+      boardOwnership = createGrid(boardSize);
+      lastPixelByUser.forEach((_value, key) => lastPixelByUser.set(key, null));
+      paintCountByUser.forEach((_value, key) => paintCountByUser.set(key, 0));
+      io.to("pixlnary").emit("board_cleared");
+      io.to("pixlnary").emit("board_state", {
+        board: boardState,
+        owners: boardOwnership,
+        size: boardSize,
+        count: io.engine.clientsCount,
+        leaderboard: buildLeaderboard()
+      });
+
+      // Start new round
+      setTimeout(() => {
+        gameManager.startRound("pixlnary");
+      }, 1000); // Small delay to let clients update
+    }
+  });
 
   socket.on("paint_pixel", ({ x, y, color }) => {
+    // Check if player can draw (must be drawer in active round)
+    if (!gameManager.canDraw(socket.id)) {
+      console.warn(`[Paint rejected] ${username} attempted to draw but is not the drawer`);
+      return;
+    }
+
     if (
       typeof x !== "number" ||
       typeof y !== "number" ||
@@ -113,11 +193,17 @@ io.on("connection", (socket) => {
     paintCountByUser.set(socket.id, (paintCountByUser.get(socket.id) ?? 0) + 1);
 
     console.log(`[Paint] ${username}: (${x}, ${y}) -> ${color}`);
-    io.emit("pixel_updated", { x, y, color, owner: username });
+    io.to("pixlnary").emit("pixel_updated", { x, y, color, owner: username });
     emitLeaderboard();
   });
 
   socket.on("undo_pixel", () => {
+    // Only drawer can undo during active round
+    if (!gameManager.canDraw(socket.id)) {
+      socket.emit("error_message", { message: "Only the drawer can undo during a round." });
+      return;
+    }
+
     const lastAction = lastPixelByUser.get(socket.id);
     if (!lastAction) {
       socket.emit("error_message", { message: "Nothing to undo yet." });
@@ -148,7 +234,7 @@ io.on("connection", (socket) => {
     }
 
     console.log(`[Undo] ${username}: restored (${x}, ${y}) to ${previousColor ?? "empty"}`);
-    io.emit("pixel_updated", {
+    io.to("pixlnary").emit("pixel_updated", {
       x,
       y,
       color: previousColor,
@@ -158,20 +244,39 @@ io.on("connection", (socket) => {
   });
 
   socket.on("clear_board", () => {
+    // Only drawer can clear during active round, or anyone if no active round
+    const role = gameManager.getRole(socket.id);
+    const room = gameManager.getRoom("pixlnary");
+    if (room && room.isRoundActive && role !== "drawer") {
+      socket.emit("error_message", { message: "Only the drawer can clear during a round." });
+      return;
+    }
+
     boardState = createGrid(boardSize);
     boardOwnership = createGrid(boardSize);
     lastPixelByUser.forEach((_value, key) => lastPixelByUser.set(key, null));
     paintCountByUser.forEach((_value, key) => paintCountByUser.set(key, 0));
     console.log(`[Clear] ${username} reset the board`);
 
-    io.emit("board_cleared");
-    io.emit("board_state", {
+    io.to("pixlnary").emit("board_cleared");
+    io.to("pixlnary").emit("board_state", {
       board: boardState,
       owners: boardOwnership,
       size: boardSize,
       count: io.engine.clientsCount,
       leaderboard: buildLeaderboard()
     });
+  });
+
+  // Handle guess attempts
+  socket.on("guessAttempt", ({ guess }) => {
+    if (typeof guess !== "string") {
+      return;
+    }
+    const correct = gameManager.handleGuess(socket.id, guess);
+    if (correct) {
+      console.log(`[Guess] ${username} correctly guessed the word!`);
+    }
   });
 
   socket.on("chat_message", ({ message }) => {
@@ -217,16 +322,19 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
+    // Remove from game manager
+    gameManager.removePlayer(socket.id);
+
     userLabels.delete(socket.id);
     lastPixelByUser.delete(socket.id);
     paintCountByUser.delete(socket.id);
     console.log(`${username} disconnected. Active users: ${io.engine.clientsCount}`);
-    io.emit("user_count", { count: io.engine.clientsCount });
+    io.to("pixlnary").emit("user_count", { count: io.engine.clientsCount });
     emitLeaderboard();
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`PixelBoard backend listening on port ${PORT}`);
+  console.log(`Pixlnary backend listening on port ${PORT}`);
 });
 

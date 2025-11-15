@@ -15,7 +15,7 @@ import {
  * The component also shows hover tooltips indicating which player last painted
  * a pixel, fading them out shortly after the cursor leaves the cell.
  */
-const PixelGrid = forwardRef(({ board, owners, onPaint }, ref) => {
+const PixelGrid = forwardRef(({ board, owners, onPaint, canDraw = true }, ref) => {
   const [isPointerDown, setIsPointerDown] = useState(false);
   const [hoverInfo, setHoverInfo] = useState(null);
   const wrapperRef = useRef(null);
@@ -238,6 +238,7 @@ const PixelGrid = forwardRef(({ board, owners, onPaint }, ref) => {
 
   const handlePointerDown = (event, x, y) => {
     event.preventDefault();
+    if (!canDraw) return;
     setIsPointerDown(true);
     onPaint(x, y);
     const cell = pointToCell(event) ?? {
@@ -255,7 +256,7 @@ const PixelGrid = forwardRef(({ board, owners, onPaint }, ref) => {
     const cell = pointToCell(event);
     if (cell) {
       showHover(cell);
-      if (isPointerDown) {
+      if (isPointerDown && canDraw) {
         onPaint(cell.x, cell.y);
       }
     }
@@ -265,7 +266,7 @@ const PixelGrid = forwardRef(({ board, owners, onPaint }, ref) => {
     const cell = pointToCell(event);
     if (cell) {
       showHover(cell);
-      if (isPointerDown) {
+      if (isPointerDown && canDraw) {
         onPaint(cell.x, cell.y);
       }
     } else {
@@ -291,11 +292,12 @@ const PixelGrid = forwardRef(({ board, owners, onPaint }, ref) => {
             <button
               key={`${x}-${y}`}
               type="button"
-              className={`pixel-cell ${color ? "filled" : "empty"}`}
+              className={`pixel-cell ${color ? "filled" : "empty"} ${!canDraw ? "disabled" : ""}`}
               style={{ backgroundColor: color || "transparent" }}
               onPointerDown={(event) => handlePointerDown(event, x, y)}
               onPointerEnter={(event) => handlePointerEnter(event, x, y)}
               onPointerUp={() => setIsPointerDown(false)}
+              disabled={!canDraw}
               aria-label={`Pixel ${x + 1}, ${y + 1}`}
             >
               <span className="sr-only">
